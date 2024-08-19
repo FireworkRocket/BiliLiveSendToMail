@@ -30,15 +30,17 @@ public class Main {
             if (!emailSentToday) {
                 checkLiveStatusAndSendEmails();
             } else {
-                System.out.println(num + ":今天的邮件已经发送或跳过。等待第二天。");
+                System.out.println(num + ":今天的邮件已经发送或跳过。等待休眠时间结束。");
             }
         }, 0, retryIntervalSeconds, TimeUnit.SECONDS); // 使用配置文件中的重试间隔
 
         // 在指定时间重置 emailSentToday 标志
-        scheduler.scheduleAtFixedRate(() -> {
-            emailSentToday = false;
-            System.out.println("重置 emailSentToday 标志，监听准备就绪。");
-        }, getInitialDelay(), 24, TimeUnit.HOURS); // 每24小时重置一次
+        scheduler.schedule(() -> {
+            scheduler.scheduleAtFixedRate(() -> {
+                emailSentToday = false;
+                System.out.println("重置 emailSentToday 标志，监听准备就绪。");
+            }, 0, 24, TimeUnit.HOURS);
+        }, getInitialDelay(), TimeUnit.MILLISECONDS);
     }
 
     private static void loadConfig() {
@@ -76,7 +78,7 @@ public class Main {
 
         try (FileInputStream input = new FileInputStream(configFile)) {
             properties.load(input);
-            String emails = properties.getProperty("emailList");
+            String emails = properties.getProperty("EmailList");
             if (emails == null || emails.isEmpty()) {
                 throw new IllegalArgumentException("配置文件无效");
             }
