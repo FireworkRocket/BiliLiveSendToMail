@@ -14,17 +14,19 @@ import java.util.concurrent.TimeUnit;
 
 public class Main {
     private static List<String> LiveIDs;
+    private static Set<String> emailList = new HashSet<>();
     private static boolean emailSentToday = false;
     static int num = 0;
     private static final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
-    private static List<String> emailList;
     private static int checkTimeHour;
     private static int checkTimeMinute;
+    private static int getCheckTimeSed;
     private static int retryIntervalSeconds;
     private static String apiUrl;
 
     public static void main(String[] args) {
         loadConfig();
+
         scheduler.scheduleAtFixedRate(() -> {
             num++;
             if (!emailSentToday) {
@@ -41,6 +43,12 @@ public class Main {
                 System.out.println("重置 emailSentToday 标志，监听准备就绪。");
             }, 0, 24, TimeUnit.HOURS);
         }, getInitialDelay(), TimeUnit.MILLISECONDS);
+
+        // 定期检查邮件回复
+        scheduler.scheduleAtFixedRate(() -> {
+            System.out.println("CheckEmailReplies...");
+            EmailSender.checkEmailReplies();
+        }, 0, 1, TimeUnit.MINUTES); // 每分钟检查一次
     }
 
     private static void loadConfig() {
@@ -49,25 +57,35 @@ public class Main {
 
         if (!configFile.exists()) {
             try (FileOutputStream output = new FileOutputStream(configFile)) {
-                // 设置默认属性
-                properties.setProperty("LiveIDs", "XXXXXX,XXXXXX,XXXXXX");
-                properties.setProperty("EmailList", "example1@example.com,example2@example.com");
-                properties.setProperty("smtpHost", "<smtpHost>");
-                properties.setProperty("smtpPort", "<smtpPort>");
-                properties.setProperty("smtpUsername", "<smtpUsername>");
-                properties.setProperty("smtpPassword", "<smtpPassword>");
-                properties.setProperty("checkTimeHour", "21");
-                properties.setProperty("checkTimeMinute", "0");
-                properties.setProperty("retryIntervalSeconds", "10");
-                properties.setProperty("apiUrl", "https://api.live.bilibili.com/room/v1/Room/get_info?room_id=");
-                // 写入文件并添加中文注释和示例邮箱
-                properties.store(output,
-                        "Configuration file example \n " +
-                                "EmailList: List of recipient email " +
-                                "addresses, separated by commas \n  " +
-                                "Example: example1@example.com,example2@example.com \n"
-                                +" LiveIDs: List of recipient LiveIDs, separated by commas too \n" +
-                                "  Example: XXXXXX,XXXXXX,XXXXX");
+                // 使用 LinkedHashMap 维护插入顺序
+                Map<String, String> orderedProperties = new LinkedHashMap<>();
+                orderedProperties.put("LiveIDs", "XXXXXX,XXXXXX,XXXXXX");
+                orderedProperties.put("EmailList", "example1@example.com,example2@example.com");
+                orderedProperties.put("smtpHost", "<smtpHost>");
+                orderedProperties.put("smtpPort", "<smtpPort>");
+                orderedProperties.put("smtpUsername", "<smtpUsername>");
+                orderedProperties.put("smtpPassword", "<smtpPassword>");
+                orderedProperties.put("imapHost", "<imapHost>");
+                orderedProperties.put("imapPort", "<imapPort>");
+                orderedProperties.put("imapUsername", "<imapUsername>");
+                orderedProperties.put("imapPassword", "<imapPassword>");
+                orderedProperties.put("checkTimeHour", "0");
+                orderedProperties.put("checkTimeMinute", "0");
+                orderedProperties.put("checkTimeSed", "0");
+                orderedProperties.put("retryIntervalSeconds", "10");
+                orderedProperties.put("apiUrl", "https://api.live.bilibili.com/room/v1/Room/get_info?room_id=");
+
+                // 手动写入文件并添加中文注释和示例邮箱
+                try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(output, "UTF-8"))) {
+                    writer.write("# Configuration file example\n");
+                    writer.write("# EmailList: List of recipient email addresses, separated by commas\n");
+                    writer.write("# Example: example1@example.com,example2@example.com\n");
+                    writer.write("# LiveIDs: List of recipient LiveIDs, separated by commas too\n");
+                    writer.write("# Example: XXXXXX,XXXXXX,XXXXX\n");
+                    for (Map.Entry<String, String> entry : orderedProperties.entrySet()) {
+                        writer.write(entry.getKey() + "=" + entry.getValue() + "\n");
+                    }
+                }
                 System.out.println("配置文件已创建: " + configFile.getAbsolutePath() + " 请在配置完成后再次启动程序 :)");
                 System.exit(0);
             } catch (IOException e) {
@@ -82,7 +100,7 @@ public class Main {
             if (emails == null || emails.isEmpty()) {
                 throw new IllegalArgumentException("配置文件无效");
             }
-            emailList = Arrays.asList(emails.split(","));
+            emailList.addAll(Arrays.asList(emails.split(",")));
             LiveIDs = Arrays.asList(properties.getProperty("LiveIDs").split(","));
             EmailSender.setSmtpConfig(
                     properties.getProperty("smtpHost"),
@@ -90,8 +108,15 @@ public class Main {
                     properties.getProperty("smtpUsername"),
                     properties.getProperty("smtpPassword")
             );
+            EmailSender.setImapConfig(
+                    properties.getProperty("imapHost"),
+                    properties.getProperty("imapPort"),
+                    properties.getProperty("imapUsername"),
+                    properties.getProperty("imapPassword")
+            );
             checkTimeHour = Integer.parseInt(properties.getProperty("checkTimeHour"));
             checkTimeMinute = Integer.parseInt(properties.getProperty("checkTimeMinute"));
+            getCheckTimeSed = Integer.parseInt(properties.getProperty("checkTimeSed"));
             retryIntervalSeconds = Integer.parseInt(properties.getProperty("retryIntervalSeconds"));
             apiUrl = properties.getProperty("apiUrl");
         } catch (IOException | IllegalArgumentException e) {
@@ -154,6 +179,7 @@ public class Main {
                                 "<p><strong>直播状态:</strong> " + data.getLiveStatus() + "</p>" +
                                 "<p><strong>用户空间:</strong> <a href='https://space.bilibili.com/" + data.getUid() + "'>点击这里</a></p>" +
                                 "<p><strong>直播链接:</strong> <a href='https://live.bilibili.com/" + liveID + "'>点击这里</a></p>" +
+                                "<p>如果您不想再接收此类邮件，请回复“TD”到此邮件。</p>" +
                                 "</div>" +
                                 "</div>" +
                                 "</body>" +
@@ -162,7 +188,7 @@ public class Main {
                         String emailSubject = "直播信息通知";
 
                         // 发送邮件给所有收件人
-                        EmailSender.sendEmails(emailList, emailSubject, emailBody);
+                        EmailSender.sendEmails(new ArrayList<>(emailList), emailSubject, emailBody);
                         emailSentToday = true; // 发送完邮件后设置标志为 true
                         System.out.println("邮件发送成功。");
                     }
@@ -199,7 +225,7 @@ public class Main {
         Calendar nextCheckTime = Calendar.getInstance(TimeZone.getDefault());
         nextCheckTime.set(Calendar.HOUR_OF_DAY, checkTimeHour);
         nextCheckTime.set(Calendar.MINUTE, checkTimeMinute);
-        nextCheckTime.set(Calendar.SECOND, 0);
+        nextCheckTime.set(Calendar.SECOND, getCheckTimeSed);
         nextCheckTime.set(Calendar.MILLISECOND, 0);
         if (now.after(nextCheckTime)) {
             nextCheckTime.add(Calendar.DAY_OF_MONTH, 1);
