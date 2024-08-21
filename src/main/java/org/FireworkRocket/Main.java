@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 
 public class Main {
     private static List<String> LiveIDs;
-    private static Set<String> emailList = new HashSet<>();
+    public static Set<String> emailList = new HashSet<>();
     private static boolean emailSentToday = false;
     static int num = 0;
     private static final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
@@ -23,10 +23,12 @@ public class Main {
     private static int getCheckTimeSed;
     private static int retryIntervalSeconds;
     private static String apiUrl;
+    private static boolean Unsubscribe;
+    private static int CheckEmailRepliesTime;
+    public static boolean SaveDeletedEmail;
 
     public static void main(String[] args) {
         loadConfig();
-
         scheduler.scheduleAtFixedRate(() -> {
             num++;
             if (!emailSentToday) {
@@ -45,10 +47,26 @@ public class Main {
         }, getInitialDelay(), TimeUnit.MILLISECONDS);
 
         // 定期检查邮件回复
-        scheduler.scheduleAtFixedRate(() -> {
-            System.out.println("CheckEmailReplies...");
-            EmailSender.checkEmailReplies();
-        }, 0, 1, TimeUnit.MINUTES); // 每分钟检查一次
+        if (Unsubscribe) {
+            scheduler.scheduleAtFixedRate(() -> {
+                System.out.println("CheckEmailReplies...");
+                EmailSender.checkEmailReplies(false);
+                loadConfig(); // 重载配置文件
+                if (emailList.isEmpty()) {
+                    System.out.println("\033[0;33m警告：没有可以发送邮件的邮箱地址\033[0m");
+                }
+            }, 0, CheckEmailRepliesTime, TimeUnit.MINUTES); // 每分钟检查一次
+        }
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("...");
+            // 执行清理操作，例如关闭邮件连接
+            EmailSender.checkEmailReplies(true);
+            if (SaveDeletedEmail) {
+                System.out.println(EmailSender.DeletedMailList);
+            }
+            scheduler.shutdown();
+        }));
     }
 
     private static void loadConfig() {
@@ -73,6 +91,9 @@ public class Main {
                 orderedProperties.put("checkTimeMinute", "0");
                 orderedProperties.put("checkTimeSed", "0");
                 orderedProperties.put("retryIntervalSeconds", "10");
+                orderedProperties.put("Unsubscribe", "True");
+                orderedProperties.put("CheckEmailRepliesTime", "1");
+                orderedProperties.put("SaveDeletedEmail", "False");
                 orderedProperties.put("apiUrl", "https://api.live.bilibili.com/room/v1/Room/get_info?room_id=");
 
                 // 手动写入文件并添加中文注释和示例邮箱
@@ -97,9 +118,6 @@ public class Main {
         try (FileInputStream input = new FileInputStream(configFile)) {
             properties.load(input);
             String emails = properties.getProperty("EmailList");
-            if (emails == null || emails.isEmpty()) {
-                throw new IllegalArgumentException("配置文件无效");
-            }
             emailList.addAll(Arrays.asList(emails.split(",")));
             LiveIDs = Arrays.asList(properties.getProperty("LiveIDs").split(","));
             EmailSender.setSmtpConfig(
@@ -118,6 +136,9 @@ public class Main {
             checkTimeMinute = Integer.parseInt(properties.getProperty("checkTimeMinute"));
             getCheckTimeSed = Integer.parseInt(properties.getProperty("checkTimeSed"));
             retryIntervalSeconds = Integer.parseInt(properties.getProperty("retryIntervalSeconds"));
+            Unsubscribe = Boolean.parseBoolean(properties.getProperty("Unsubscribe"));
+            CheckEmailRepliesTime = Integer.parseInt(properties.getProperty("CheckEmailRepliesTime"));
+            SaveDeletedEmail = Boolean.parseBoolean(properties.getProperty("SaveDeletedEmail"));
             apiUrl = properties.getProperty("apiUrl");
         } catch (IOException | IllegalArgumentException e) {
             System.err.println("加载配置时出错: " + e.getMessage());
@@ -128,7 +149,7 @@ public class Main {
     private static void checkLiveStatusAndSendEmails() {
         for (String liveID : LiveIDs) {
             try {
-                System.out.println("检查直播状态...");
+                System.out.println(num+":检查直播状态...");
 
                 // 构建请求 URL
                 URL url = new URL(apiUrl + liveID);
@@ -190,14 +211,15 @@ public class Main {
                         // 发送邮件给所有收件人
                         EmailSender.sendEmails(new ArrayList<>(emailList), emailSubject, emailBody);
                         emailSentToday = true; // 发送完邮件后设置标志为 true
-                        System.out.println("邮件发送成功。");
+                        System.out.println(">>>>>>邮件任务下发<<<<<<");
                     }
                 } else {
                     System.out.println("直播状态不是 1，将在" + retryIntervalSeconds + "秒后再次检查。");
                 }
 
             } catch (Exception e) {
-                System.err.println("发生错误: " + e.getMessage());
+
+                System.err.println("您的邮件配置或LiveIDs配置可能出现问题: \n" + e.getMessage());
                 e.printStackTrace();
             }
         }
@@ -222,15 +244,21 @@ public class Main {
 
     private static long getInitialDelay() {
         Calendar now = Calendar.getInstance(TimeZone.getDefault());
+
         Calendar nextCheckTime = Calendar.getInstance(TimeZone.getDefault());
+
         nextCheckTime.set(Calendar.HOUR_OF_DAY, checkTimeHour);
         nextCheckTime.set(Calendar.MINUTE, checkTimeMinute);
         nextCheckTime.set(Calendar.SECOND, getCheckTimeSed);
         nextCheckTime.set(Calendar.MILLISECOND, 0);
+
         if (now.after(nextCheckTime)) {
             nextCheckTime.add(Calendar.DAY_OF_MONTH, 1);
         }
+
+        System.out.println("下次工作时间"+nextCheckTime.getTime());
         long initialDelay = nextCheckTime.getTimeInMillis() - now.getTimeInMillis();
+
         System.out.println("Initial delay: " + initialDelay + " milliseconds");
         return initialDelay;
     }

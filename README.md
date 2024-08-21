@@ -25,6 +25,9 @@ checkTimeHour=0
 checkTimeMinute=0
 checkTimeSed=0
 retryIntervalSeconds=10
+Unsubscribe=True
+CheckEmailRepliesTime=1
+SaveDeletedEmail=False
 apiUrl=https://api.live.bilibili.com/room/v1/Room/get_info?room_id=
 ```
 
@@ -46,6 +49,9 @@ checkTimeHour=定时任务，执行完这次推送后多久再检测（小时）
 checkTimeMinute=定时任务，执行完这次推送后多久再检测（分钟）
 checkTimeSed=定时任务，执行完这次推送后多久再检测（秒）
 retryIntervalSeconds=检测到未开播时多久再重试（秒）
+Unsubscribe=开启退订功能
+CheckEmailRepliesTime=多久检查一次是否有新的退订用户
+SaveDeletedEmail=是否记录退订的用户（布尔值）
 apiUrl=最好不要改
 ```
 

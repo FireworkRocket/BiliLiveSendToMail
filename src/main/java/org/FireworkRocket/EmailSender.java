@@ -5,11 +5,17 @@ import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.search.FlagTerm;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 public class EmailSender {
     private static final int THREAD_POOL_SIZE = Runtime.getRuntime().availableProcessors();
@@ -23,7 +29,7 @@ public class EmailSender {
     private static String imapPort;
     private static String imapUsername;
     private static String imapPassword;
-    private static Set<String> emailList = new HashSet<>();
+    public static Set<String> DeletedMailList = new HashSet<>();
 
     static {
         // 添加关闭钩子以正确关闭执行器
@@ -88,7 +94,7 @@ public class EmailSender {
         emailSentToday.set(true); // Set the flag after attempting to send emails to all recipients
     }
 
-    public static void checkEmailReplies() {
+    public static void checkEmailReplies(Boolean isClose) {
         Properties props = new Properties();
         props.put("mail.store.protocol", "imaps");
         props.put("mail.imap.host", imapHost);
@@ -104,10 +110,20 @@ public class EmailSender {
             });
 
             Store store = session.getStore("imaps");
-            store.connect(imapHost, imapUsername, imapPassword);
+            if (!store.isConnected()){
+                store.connect(imapHost, imapUsername, imapPassword);
+            }
 
             Folder inbox = store.getFolder("INBOX");
-            inbox.open(Folder.READ_WRITE);
+            if (!inbox.isOpen()) {
+                inbox.open(Folder.READ_WRITE);
+            }
+
+            if (isClose){
+                inbox.close(false);
+                store.close();
+                return;
+            }
 
             // 搜索未读邮件
             Message[] messages = inbox.search(new FlagTerm(new Flags(Flags.Flag.SEEN), false));
@@ -117,7 +133,9 @@ public class EmailSender {
                     Address[] fromAddresses = message.getFrom();
                     for (Address address : fromAddresses) {
                         String email = ((InternetAddress) address).getAddress();
-                        emailList.remove(email);
+                        DeletedMailList.add(email);
+                        removeEmailFromConfig(email);
+                        Main.emailList.remove(email);
                         System.out.println("Removed " + email + " from email list.");
                         sendReceipt(email); // 发送回执邮件
                     }
@@ -125,11 +143,42 @@ public class EmailSender {
                 // 标记邮件为已读
                 message.setFlag(Flags.Flag.SEEN, true);
             }
-
-            inbox.close(false);
-            store.close();
         } catch (Exception e) {
             System.err.println("Error checking email replies: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private static void removeEmailFromConfig(String email) {
+        try {
+            Properties properties = new Properties();
+            String configFilePath = "config.properties";
+            File configFile = new File(configFilePath);
+
+            // 加载配置文件
+            try (FileInputStream input = new FileInputStream(configFile)) {
+                properties.load(input);
+            }
+
+            // 获取 EmailList 属性并删除指定的邮箱地址
+            String emailListStr = properties.getProperty("EmailList");
+            if (emailListStr != null && !emailListStr.isEmpty()) {
+                List<String> emailList = new ArrayList<>(Arrays.asList(emailListStr.split(",")));
+                emailList.remove(email);
+
+                // 更新 EmailList 属性
+                properties.setProperty("EmailList", String.join(",", emailList));
+            }
+
+            // 将更新后的属性写回配置文件，同时保留原始排版和注释
+            List<String> lines = Files.readAllLines(Paths.get(configFilePath));
+            List<String> updatedLines = lines.stream()
+                    .map(line -> line.startsWith("EmailList=") ? "EmailList=" + properties.getProperty("EmailList") : line)
+                    .collect(Collectors.toList());
+
+            Files.write(Paths.get(configFilePath), updatedLines);
+        } catch (IOException e) {
+            System.err.println("更新配置文件时出错: " + e.getMessage());
             e.printStackTrace();
         }
     }
