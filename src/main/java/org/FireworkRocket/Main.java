@@ -6,6 +6,7 @@ import com.google.gson.JsonParser;
 
 import java.io.*;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.util.*;
 import java.util.concurrent.Executors;
@@ -119,7 +120,8 @@ public class Main {
             properties.load(input);
             String emails = properties.getProperty("EmailList");
             emailList.addAll(Arrays.asList(emails.split(",")));
-            LiveIDs = Arrays.asList(properties.getProperty("LiveIDs").split(","));
+            LiveIDs = new ArrayList<>(Arrays.asList(properties.getProperty("LiveIDs").split(",")));
+
             EmailSender.setSmtpConfig(
                     properties.getProperty("smtpHost"),
                     properties.getProperty("smtpPort"),
@@ -149,10 +151,10 @@ public class Main {
     private static void checkLiveStatusAndSendEmails() {
         for (String liveID : LiveIDs) {
             try {
-                System.out.println(num+":检查直播状态...");
+                System.out.println(num+":检查直播状态... [" + liveID + "]");
 
                 // 构建请求 URL
-                URL url = new URL(apiUrl + liveID);
+                URL url = new URI(apiUrl + liveID).toURL();
                 HttpURLConnection request = (HttpURLConnection) url.openConnection();
                 request.setRequestMethod("GET");
                 request.setConnectTimeout(5000);
@@ -166,13 +168,16 @@ public class Main {
 
                 // 检查直播状态是否为 1
                 if (data.getLiveStatus() == 1) {
-                    System.out.println("直播状态为 1，准备发送邮件... 再3S内按下回车键跳过今天的发送");
+                    System.out.println("直播状态为 1，准备发送邮件..." +
+                            "\n在3S内按下回车键跳过本主播 ["+ liveID+"] 的发送");
 
                     // 等待用户输入
                     if (waitForUserInput(3)) {
                         System.out.println("用户跳过了发送邮件。");
-                        emailSentToday = true;
+                        LiveIDs.remove(liveID);
+                        return;
                     } else {
+
                         // 构建邮件内容
                         String emailBody = "<!DOCTYPE html>" +
                                 "<html>" +
@@ -210,19 +215,24 @@ public class Main {
 
                         // 发送邮件给所有收件人
                         EmailSender.sendEmails(new ArrayList<>(emailList), emailSubject, emailBody);
-                        emailSentToday = true; // 发送完邮件后设置标志为 true
+                        LiveIDs.remove(liveID);
                         System.out.println(">>>>>>邮件任务下发<<<<<<");
+                        return;
                     }
                 } else {
                     System.out.println("直播状态不是 1，将在" + retryIntervalSeconds + "秒后再次检查。");
                 }
 
-            } catch (Exception e) {
+                if (Objects.equals(LiveIDs.getLast(), null)) {
+                    emailSentToday = true; // 发送完邮件后设置标志为 true
+                }
 
+            } catch (Exception e) {
                 System.err.println("您的邮件配置或LiveIDs配置可能出现问题: \n" + e.getMessage());
                 e.printStackTrace();
             }
         }
+
     }
 
     private static boolean waitForUserInput(int timeoutSeconds) {
